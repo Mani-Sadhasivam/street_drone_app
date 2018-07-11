@@ -352,9 +352,20 @@ read_messages()
 					break;
 				}
 
+				case MAVLINK_MSG_ID_NAMED_VALUE_INT:
+				{
+					printf("MAVLINK_MSG_ID_NAMED_VALUE_INT\n");
+					mavlink_msg_named_value_int_decode(&message, &(current_messages.int_value));
+					printf("Received: %d from %s\n", current_messages.int_value.value,
+										current_messages.int_value.name);
+					current_messages.time_stamps.int_value = get_time_usec();
+					this_timestamps.int_value = current_messages.time_stamps.int_value;
+					break;
+				}
+
 				default:
 				{
-					// printf("Warning, did not handle message id %i\n",message.msgid);
+					printf("Warning, did not handle message id 0x%x\n",message.msgid);
 					break;
 				}
 
@@ -374,7 +385,7 @@ read_messages()
 //				this_timestamps.position_target_global_int &&
 //				this_timestamps.highres_imu                &&
 //				this_timestamps.attitude                   &&
-				this_timestamps.sys_status
+				this_timestamps.int_value
 				;
 
 		// give the write thread time to use the port
