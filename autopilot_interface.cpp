@@ -239,20 +239,18 @@ read_messages()
 	Time_Stamps this_timestamps;
 
 	// Blocking wait for new data
-	while ( !received_all and !time_to_exit )
+	while (!time_to_exit)
 	{
 		// ----------------------------------------------------------------------
 		//   READ MESSAGE
 		// ----------------------------------------------------------------------
 		mavlink_message_t message;
 		success = serial_port->read_message(message);
-
 		// ----------------------------------------------------------------------
 		//   HANDLE MESSAGE
 		// ----------------------------------------------------------------------
 		if( success )
 		{
-
 			// Store message sysid and compid.
 			// Note this doesn't handle multiple message sources.
 			current_messages.sysid  = message.sysid;
@@ -365,7 +363,7 @@ read_messages()
 
 				default:
 				{
-					printf("Warning, did not handle message id 0x%x\n",message.msgid);
+					//printf("Warning, did not handle message id 0x%d\n",message.msgid);
 					break;
 				}
 
@@ -375,8 +373,8 @@ read_messages()
 		} // end: if read message
 
 		// Check for receipt of all items
-		received_all =
-				this_timestamps.heartbeat                  &&
+//		received_all =
+//				this_timestamps.heartbeat                  &&
 //				this_timestamps.battery_status             &&
 //				this_timestamps.radio_status               &&
 //				this_timestamps.local_position_ned         &&
@@ -385,8 +383,8 @@ read_messages()
 //				this_timestamps.position_target_global_int &&
 //				this_timestamps.highres_imu                &&
 //				this_timestamps.attitude                   &&
-				this_timestamps.int_value
-				;
+//				this_timestamps.int_value
+//				;
 
 		// give the write thread time to use the port
 		if ( writing_status > false ) {
@@ -423,39 +421,33 @@ Autopilot_Interface::
 write_setpoint()
 {
 	// --------------------------------------------------------------------------
-	//   PACK PAYLOAD
-	// --------------------------------------------------------------------------
-
-	// pull from position target
-	mavlink_set_position_target_local_ned_t sp = current_setpoint;
-
-	// double check some system parameters
-	if ( not sp.time_boot_ms )
-		sp.time_boot_ms = (uint32_t) (get_time_usec()/1000);
-	sp.target_system    = system_id;
-	sp.target_component = autopilot_id;
-
-
-	// --------------------------------------------------------------------------
 	//   ENCODE
 	// --------------------------------------------------------------------------
 
-	mavlink_message_t message;
-	mavlink_msg_set_position_target_local_ned_encode(system_id, companion_id, &message, &sp);
+	mavlink_message_t debug_vect_msg;
+	mavlink_debug_vect_t debug_vect;
 
+	// Send dummy CAN data
+	debug_vect.str_req = 50; // Steer Request
+	debug_vect.thr_req = 70; // Torque Request
+	debug_vect.str_auto = 1; // Steer Auto
+	debug_vect.thr_auto = 1; // Torque Auto
+	printf("Sending CAN data:\n Steer Req: %d\n Torque Req: %d\n Steer Auto: %d\n Torque Auto: %d\n",
+				debug_vect.str_req, debug_vect.thr_req, debug_vect.str_auto, debug_vect.thr_auto);
+	mavlink_msg_debug_vect_encode(system_id, companion_id, &debug_vect_msg, &debug_vect);
 
 	// --------------------------------------------------------------------------
 	//   WRITE
 	// --------------------------------------------------------------------------
 
 	// do the write
-	int len = write_message(message);
+	int len = write_message(debug_vect_msg);
 
 	// check the write
 	if ( len <= 0 )
-		fprintf(stderr,"WARNING: could not send POSITION_TARGET_LOCAL_NED \n");
-	//	else
-	//		printf("%lu POSITION_TARGET  = [ %f , %f , %f ] \n", write_count, position_target.x, position_target.y, position_target.z);
+		fprintf(stderr,"WARNING: could not send CAN data \n");
+
+	time_to_exit = true;
 
 	return;
 }
@@ -578,7 +570,6 @@ start()
 		throw 1;
 	}
 
-
 	// --------------------------------------------------------------------------
 	//   READ THREAD
 	// --------------------------------------------------------------------------
@@ -588,14 +579,6 @@ start()
 	result = pthread_create( &read_tid, NULL, &start_autopilot_interface_read_thread, this );
 	if ( result ) throw result;
 
-	// now we're reading messages
-	printf("\n");
-
-
-	// --------------------------------------------------------------------------
-	//   CHECK FOR MESSAGES
-	// --------------------------------------------------------------------------
-
 	printf("CHECK FOR MESSAGES\n");
 
 	while ( not current_messages.sysid )
@@ -604,68 +587,6 @@ start()
 			return;
 		usleep(500000); // check at 2Hz
 	}
-
-	printf("Found\n");
-
-	// now we know autopilot is sending messages
-	printf("\n");
-
-
-	// --------------------------------------------------------------------------
-	//   GET SYSTEM and COMPONENT IDs
-	// --------------------------------------------------------------------------
-
-	// This comes from the heartbeat, which in theory should only come from
-	// the autopilot we're directly connected to it.  If there is more than one
-	// vehicle then we can't expect to discover id's like this.
-	// In which case set the id's manually.
-
-	// System ID
-	if ( not system_id )
-	{
-		system_id = current_messages.sysid;
-		printf("GOT VEHICLE SYSTEM ID: %i\n", system_id );
-	}
-
-	// Component ID
-	if ( not autopilot_id )
-	{
-		autopilot_id = current_messages.compid;
-		printf("GOT AUTOPILOT COMPONENT ID: %i\n", autopilot_id);
-		printf("\n");
-	}
-
-
-	// --------------------------------------------------------------------------
-	//   GET INITIAL POSITION
-	// --------------------------------------------------------------------------
-
-	// Wait for initial position ned
-	while ( not ( current_messages.time_stamps.local_position_ned &&
-				  current_messages.time_stamps.attitude            )  )
-	{
-		if ( time_to_exit )
-			return;
-		usleep(500000);
-	}
-
-	// copy initial position ned
-	Mavlink_Messages local_data = current_messages;
-	initial_position.x        = local_data.local_position_ned.x;
-	initial_position.y        = local_data.local_position_ned.y;
-	initial_position.z        = local_data.local_position_ned.z;
-	initial_position.vx       = local_data.local_position_ned.vx;
-	initial_position.vy       = local_data.local_position_ned.vy;
-	initial_position.vz       = local_data.local_position_ned.vz;
-	initial_position.yaw      = local_data.attitude.yaw;
-	initial_position.yaw_rate = local_data.attitude.yawspeed;
-
-	printf("INITIAL POSITION XYZ = [ %.4f , %.4f , %.4f ] \n", initial_position.x, initial_position.y, initial_position.z);
-	printf("INITIAL POSITION YAW = %.4f \n", initial_position.yaw);
-	printf("\n");
-
-	// we need this before starting the write thread
-
 
 	// --------------------------------------------------------------------------
 	//   WRITE THREAD
@@ -678,10 +599,6 @@ start()
 	// wait for it to be started
 	while ( not writing_status )
 		usleep(100000); // 10Hz
-
-	// now we're streaming setpoint commands
-	printf("\n");
-
 
 	// Done!
 	return;
@@ -789,8 +706,9 @@ read_thread()
 {
 	reading_status = true;
 
-	while ( ! time_to_exit )
+	while ( !time_to_exit )
 	{
+		printf("Reading\n");
 		read_messages();
 		usleep(100000); // Read batches at 10Hz
 	}
@@ -824,21 +742,17 @@ write_thread(void)
 	// set position target
 	current_setpoint = sp;
 
-	// write a message and signal writing
-	write_setpoint();
-	writing_status = true;
-
-	// Pixhawk needs to see off-board commands at minimum 2Hz,
-	// otherwise it will go into fail safe
 	while ( !time_to_exit )
 	{
 		usleep(250000);   // Stream at 4Hz
+		printf("Writing\n");
 		write_setpoint();
 	}
 
 	// signal end
 	writing_status = false;
 
+	
 	return;
 
 }
